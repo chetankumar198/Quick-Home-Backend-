@@ -1,12 +1,22 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const admin = require('firebase-admin');
-require('dotenv').config(); // Load env variables
+const cors = require('cors'); // ✅ Add this
+require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 1000;
+const port = process.env.PORT || 5000;
 
-// ✅ Middleware to parse JSON request bodies
+// ✅ Apply CORS before routes
+app.use(cors({
+  origin: "http://localhost:5173", // your frontend
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+}));
+app.options("*", cors()); // handle preflight requests
+
+// ✅ Middleware to parse JSON
 app.use(express.json());
 
 // ✅ Initialize Firebase Admin SDK using .env
@@ -38,7 +48,7 @@ async function connectDB() {
     console.log("✅ MongoDB connected");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err);
-    process.exit(1); // Stop server if DB fails
+    process.exit(1);
   }
 }
 connectDB();
@@ -56,26 +66,65 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// ✅ Insert a dummy user (only once for testing)
-async function createDummyUser() {
-  try {
-    const user = new User({
-      name: "John Doe",
-      age: 25,
-      email: "john@example.com"
-    });
-    const savedUser = await user.save();
-    console.log("✅ Dummy user saved:", savedUser);
-  } catch (err) {
-    console.log("❌ Error saving user:", err);
-  }
-}
-// Uncomment this line ONLY for first run
-// createDummyUser();
+// ✅ Order Schema & Model
+const serviceSchema = new mongoose.Schema({
+  service: String,
+  quantity: Number,
+  price: Number
+}, { _id: false });
+
+const orderSchema = new mongoose.Schema({
+  name: String,
+  phone: String,
+  address: String,
+  pincode: String,
+  city: String,
+  state: String,
+  landmark: String,
+  services: [serviceSchema],
+  totalPrice: Number,
+  paymentMethod: String,
+  status: { type: String, enum: ["pending","confirmed","completed","cancelled"], default: "pending" },
+  placedAt: { type: Date, default: Date.now }
+});
+
+const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
 
 // ✅ Order routes
 const orderRoutes = require('./routes/orderRoutes');
 app.use('/api/orders', orderRoutes);
+
+// ✅ Signup
+app.post("/signup", async (req, res) => {
+  const { phone, password, name, email } = req.body;
+
+  try {
+    const userRecord = await admin.auth().createUser({
+      phoneNumber: `+91${phone}`,
+      password,
+      displayName: name,
+      email: email || undefined,
+    });
+
+    const token = await admin.auth().createCustomToken(userRecord.uid);
+    return res.status(200).json({ token });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+// ✅ Login
+app.post("/login", async (req, res) => {
+  const { phone, password } = req.body;
+
+  try {
+    const userRecord = await admin.auth().getUserByPhoneNumber(`+91${phone}`);
+    const token = await admin.auth().createCustomToken(userRecord.uid);
+    return res.status(200).json({ token });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
 
 // ✅ Start server
 app.listen(port, () => {
